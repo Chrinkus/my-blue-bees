@@ -1,84 +1,58 @@
-#include <SDL.h>
-#include <SDL_image.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <stdbool.h>
 
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
+#include "sdlgame.h"
 
-void sdl_error(const char* msg)
-{
-	fprintf(stderr, "%s! SDL Error: %s\n", msg, SDL_GetError());
-}
-
-void sdl_img_error(const char* msg)
-{
-	fprintf(stderr, "%s! SDL_image Error: %s\n", msg, IMG_GetError());
-}
-
-struct sdlgame {
-	SDL_Window* window;
-	SDL_Renderer* context;
+struct sdlgame_data bees_data = {
+	.title		= "My Blue Bees",
+	.screen_width	= 640,
+	.screen_height	= 480,
+	.init_flags	= SDL_INIT_VIDEO, // | SDL_INIT_JOYSTICK,
+	.ctx_flags	= SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC
 };
 
-struct sdlgame* sdlgame_init(struct sdlgame* game, const char* title,
-		const int screen_width, const int screen_height)
+const char* tilemap = "./images/bees_tiles_1.png";
+
+SDL_Texture* texture_load_scaled(struct texture* tex, const char* path,
+		SDL_Renderer* ctx, int factor, const SDL_Color* key)
 {
-	if (SDL_Init(SDL_INIT_VIDEO) < 0) {
-		sdl_error("SDL could not initialize");
+	SDL_Surface* surface = IMG_Load(path);
+	if (!surface) {
+		sdl_img_error("Could not load image");
 		return NULL;
 	}
 
-	game->window = SDL_CreateWindow(title,
-			SDL_WINDOWPOS_UNDEFINED,
-			SDL_WINDOWPOS_UNDEFINED,
-			screen_width,
-			screen_height,
-			SDL_WINDOW_SHOWN);
-
-	if (!game->window) {
-		sdl_error("Window could not be created");
-		return NULL;
+	if (key) {
+		SDL_SetColorKey(surface, SDL_TRUE,
+				SDL_MapRGB(surface->format,
+					key->r, key->g, key->b));
 	}
 
-	game->context = SDL_CreateRenderer(game->window, -1,
-			SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-
-	if (!game->context) {
-		sdl_error("Renderer could not be created");
-		return NULL;
+	SDL_Rect dst = { 0, 0, surface->w * factor, surface->h * factor };
+	SDL_Surface* scaled = SDL_CreateRGBSurface(0, dst.w, dst.h, 32,
+			0, 0, 0, 0);	// 0 colour masks
+	if (SDL_BlitScaled(surface, NULL, scaled, &dst) < 0) {
+		// Do nothing for now.
+		sdl_error("Could not scale texture");
 	}
 
-	int img_flags = IMG_INIT_PNG;
-	if (IMG_Init(img_flags) != img_flags) {
-		sdl_img_error("SDL_image could not initialize");
-		return NULL;
-	}
+	// If this fails we'd be returning NULL anyways. This way we still
+	// clean up the surface.
+	tex->tex = SDL_CreateTextureFromSurface(ctx, scaled);
+	tex->w = scaled->w;
+	tex->h = scaled->h;
 
-	return game;
+	SDL_FreeSurface(surface);
+	SDL_FreeSurface(scaled);
+
+	return tex->tex;
 }
-
-void sdlgame_cleanup(struct sdlgame* game)
-{
-	SDL_DestroyRenderer(game->context);
-	SDL_DestroyWindow(game->window);
-	game->context = NULL;
-	game->window = NULL;
-
-	IMG_Quit();
-	SDL_Quit();
-}
-
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
-
-enum Screen_Dims { SCREEN_DIMS_WIDTH = 640, SCREEN_DIMS_HEIGHT = 480 };
 
 int main(int argc, char* argv[])
 {
 	struct sdlgame game;
 
-	if (!sdlgame_init(&game, "My Blue Bees",
-				SCREEN_DIMS_WIDTH, SCREEN_DIMS_HEIGHT)) {
+	if (!sdlgame_init(&game, &bees_data)) {
 		fprintf(stderr, "%s failed to initialize\n", argv[0]);
 		return EXIT_FAILURE;
 	}
@@ -88,13 +62,21 @@ int main(int argc, char* argv[])
 		printf("Load test map %s\n", argv[1]);
 	}
 
-	SDL_Event e;
+	struct texture tex = { NULL, 0, 0 };
 
-	for (bool running = true; running; ) {
+	if (!texture_load_scaled(&tex, tilemap, game.context, 4, NULL)) {
+		sdl_error("Failed to render texture");
+		return EXIT_FAILURE;
+	}
+
+	SDL_Event e;
+	SDL_Point origin = { 0, 0 };	// not sure about this..
+
+	for (int running = 1; running; ) {
 
 		while (SDL_PollEvent(&e)) {
 			if (e.type == SDL_QUIT) {
-				running = false;
+				running = 0;
 				break;
 			}
 		}
@@ -103,9 +85,12 @@ int main(int argc, char* argv[])
 		SDL_RenderClear(game.context);
 
 		// Draw more..
+		texture_render(&tex, game.context, origin, NULL);
 
 		SDL_RenderPresent(game.context);
 	}
+
+	texture_free(&tex);
 
 	sdlgame_cleanup(&game);
 
